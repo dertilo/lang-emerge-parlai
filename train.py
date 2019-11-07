@@ -49,138 +49,155 @@ from world import QAWorld
 OPT = options.read()
 
 # seed random for reproducibility
-if OPT.get('use_gpu'):
+if OPT.get("use_gpu"):
     torch.cuda.manual_seed_all(1337)
 else:
     torch.manual_seed(1337)
 
-#-------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 # setup dataset and opts
-#-------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 dataset = ShapesQADataset(OPT)
 # pull out few attributes from dataset in main opts for other bots to use
-OPT['props'] = dataset.properties
-OPT['task_vocab'] = len(dataset.task_defn)
+OPT["props"] = dataset.properties
+OPT["task_vocab"] = len(dataset.task_defn)
 
 # make a directory to save checkpoints
-timestamp = datetime.strftime(datetime.utcnow(), '%d-%b-%Y-%X')
-OPT['save_path'] = os.path.join(OPT['save_path'], 'world-{}'.format(timestamp))
-os.makedirs(OPT['save_path'])
+timestamp = datetime.strftime(datetime.utcnow(), "%d-%b-%Y-%X")
+OPT["save_path"] = os.path.join(OPT["save_path"], "world-{}".format(timestamp))
+os.makedirs(OPT["save_path"])
 
-#-------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 # setup experiment
-#-------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 questioner = Questioner(OPT)
 answerer = Answerer(OPT)
 # this reward tensor is re-used every iteration
-reward = torch.Tensor(OPT['batch_size'], 1).fill_(-10 * OPT['rl_scale'])
+reward = torch.Tensor(OPT["batch_size"], 1).fill_(-10 * OPT["rl_scale"])
 cumulative_reward = None
-if OPT.get('use_gpu'):
+if OPT.get("use_gpu"):
     questioner, answerer, reward = questioner.cuda(), answerer.cuda(), reward.cuda()
 
-print('Questioner and Answerer Bots: ')
+print("Questioner and Answerer Bots: ")
 print(questioner)
 print(answerer)
 world = QAWorld(OPT, questioner, answerer)
 
-optimizer = optim.Adam([{'params': world.abot.parameters(),
-                         'lr': OPT['learning_rate']},
-                        {'params': world.qbot.parameters(),
-                         'lr': OPT['learning_rate']}])
+optimizer = optim.Adam(
+    [
+        {"params": world.abot.parameters(), "lr": OPT["learning_rate"]},
+        {"params": world.qbot.parameters(), "lr": OPT["learning_rate"]},
+    ]
+)
 
-#-------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 # train agents
-#-------------------------------------------------------------------------------------------------
-NUM_ITER_PER_EPOCH = max(0, int(np.ceil(len(dataset) / OPT['batch_size'])))
+# -------------------------------------------------------------------------------------------------
+NUM_ITER_PER_EPOCH = max(0, int(np.ceil(len(dataset) / OPT["batch_size"])))
 
-matches = {'train': None, 'val': None}
-accuracy = {'train': 0.0, 'val': 0.0}
+matches = {"train": None, "val": None}
+accuracy = {"train": 0.0, "val": 0.0}
 
-for epoch_id in range(OPT['num_epochs']):
+for epoch_id in range(OPT["num_epochs"]):
     for iter_id in range(NUM_ITER_PER_EPOCH):
         optimizer.zero_grad()
 
-        #-----------------------------------------------------------------------------------------
+        # -----------------------------------------------------------------------------------------
         # episode batch retrieval and dialog
-        #-----------------------------------------------------------------------------------------
-        if matches.get('train') is not None:
-            batch = dataset.random_batch('train', matches['train'])
+        # -----------------------------------------------------------------------------------------
+        if matches.get("train") is not None:
+            batch = dataset.random_batch("train", matches["train"])
         else:
-            batch = dataset.random_batch('train')
-        batch['image'], batch['task'] = Variable(batch['image']), Variable(batch['task'])
-        world.qbot.observe({'batch': batch, 'episode_done': True})
+            batch = dataset.random_batch("train")
+        batch["image"], batch["task"] = (
+            Variable(batch["image"]),
+            Variable(batch["task"]),
+        )
+        world.qbot.observe({"batch": batch, "episode_done": True})
 
-        for _ in range(OPT['num_rounds']):
+        for _ in range(OPT["num_rounds"]):
             world.parley()
-        #-----------------------------------------------------------------------------------------
+        # -----------------------------------------------------------------------------------------
         # reward formulation and reinforcement
-        #-----------------------------------------------------------------------------------------
-        guess_token, guess_distr = world.qbot.predict(batch['task'], 2)
-        reward.fill_(- 10 * OPT['rl_scale'])
+        # -----------------------------------------------------------------------------------------
+        guess_token, guess_distr = world.qbot.predict(batch["task"], 2)
+        reward.fill_(-10 * OPT["rl_scale"])
 
         # both attributes need to match
-        first_match = guess_token[0].data == batch['labels'][:, 0]
-        second_match = guess_token[1].data == batch['labels'][:, 1]
-        reward[first_match & second_match] = OPT['rl_scale']
+        first_match = guess_token[0].data == batch["labels"][:, 0]
+        second_match = guess_token[1].data == batch["labels"][:, 1]
+        reward[first_match & second_match] = OPT["rl_scale"]
 
         # record cumulative reward in world
-        batch_reward = torch.mean(reward) / OPT['rl_scale']
+        batch_reward = torch.mean(reward) / OPT["rl_scale"]
         if not cumulative_reward:
             cumulative_reward = batch_reward
         cumulative_reward = 0.95 * cumulative_reward + 0.05 * batch_reward
 
         # qbot and abot observe rewards at end of episode
-        world.qbot.observe({'reward': reward, 'episode_done': True})
-        world.abot.observe({'reward': reward, 'episode_done': True})
+        world.qbot.observe({"reward": reward, "episode_done": True})
+        world.abot.observe({"reward": reward, "episode_done": True})
 
         optimizer.step()
 
-        #-----------------------------------------------------------------------------------------
+        # -----------------------------------------------------------------------------------------
         # logging metrics
-        #-----------------------------------------------------------------------------------------
+        # -----------------------------------------------------------------------------------------
         if (NUM_ITER_PER_EPOCH * epoch_id + iter_id) % 100 == 0:
-            timestamp = datetime.strftime(datetime.utcnow(), '%a, %d %b %Y %X')
-            print('[%s][Iter: %d][Epoch: %.2f][Reward: %.4f][Train Acc.: %.2f Val Acc.: %.2f]' % \
-                  (timestamp, NUM_ITER_PER_EPOCH * epoch_id + iter_id, epoch_id,
-                   cumulative_reward, accuracy['train'], accuracy['val']))
-    #---------------------------------------------------------------------------------------------
+            timestamp = datetime.strftime(datetime.utcnow(), "%a, %d %b %Y %X")
+            print(
+                "[%s][Iter: %d][Epoch: %.2f][Reward: %.4f][Train Acc.: %.2f Val Acc.: %.2f]"
+                % (
+                    timestamp,
+                    NUM_ITER_PER_EPOCH * epoch_id + iter_id,
+                    epoch_id,
+                    cumulative_reward,
+                    accuracy["train"],
+                    accuracy["val"],
+                )
+            )
+    # ---------------------------------------------------------------------------------------------
     # training and validation metrics
-    #---------------------------------------------------------------------------------------------
+    # ---------------------------------------------------------------------------------------------
     world.qbot.eval()
     world.abot.eval()
-    for dtype in ['train', 'val']:
+    for dtype in ["train", "val"]:
         batch = dataset.complete_data(dtype)
         # make variables volatile because graph construction is not required for eval
-        batch['image'] = Variable(batch['image'], volatile=True)
-        batch['task'] = Variable(batch['task'], volatile=True)
-        world.qbot.observe({'batch': batch, 'episode_done': True})
+        batch["image"] = Variable(batch["image"], volatile=True)
+        batch["task"] = Variable(batch["task"], volatile=True)
+        world.qbot.observe({"batch": batch, "episode_done": True})
 
-        for _ in range(OPT['num_rounds']):
+        for _ in range(OPT["num_rounds"]):
             world.parley()
         # compute accuracy for color, shape, and both
-        guess_token, guess_distr = world.qbot.predict(batch['task'], 2)
-        first_match = guess_token[0].data == batch['labels'][:, 0].long()
-        second_match = guess_token[1].data == batch['labels'][:, 1].long()
+        guess_token, guess_distr = world.qbot.predict(batch["task"], 2)
+        first_match = guess_token[0].data == batch["labels"][:, 0].long()
+        second_match = guess_token[1].data == batch["labels"][:, 1].long()
         matches[dtype] = first_match & second_match
-        accuracy[dtype] = 100 * torch.sum(matches[dtype]) / float(matches[dtype].size(0))
+        accuracy[dtype] = (
+            100 * torch.sum(matches[dtype]) / float(matches[dtype].size(0))
+        )
     world.qbot.train()
     world.abot.train()
 
     # break if train accuracy reaches 100%
-    if accuracy['train'] == 100:
+    if accuracy["train"] == 100:
         break
 
-    #---------------------------------------------------------------------------------------------
+    # ---------------------------------------------------------------------------------------------
     # saving checkpoints
-    #---------------------------------------------------------------------------------------------
-    if epoch_id % OPT['save_epoch'] == 0:
-        save_path = os.path.join(OPT['save_path'], 'world_epoch_%s.pth' % str(epoch_id).zfill(5))
+    # ---------------------------------------------------------------------------------------------
+    if epoch_id % OPT["save_epoch"] == 0:
+        save_path = os.path.join(
+            OPT["save_path"], "world_epoch_%s.pth" % str(epoch_id).zfill(5)
+        )
         world.save_agents(save_path)
 
-#-------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 # save final world checkpoint with a time stamp
-#-------------------------------------------------------------------------------------------------
-timestamp = datetime.strftime(datetime.utcnow(), '%d-%b-%Y-%X')
-final_save_path = os.path.join(OPT['save_path'], 'final_world_{}.pth'.format(timestamp))
-print('Saving at final world at: {}'.format(final_save_path))
+# -------------------------------------------------------------------------------------------------
+timestamp = datetime.strftime(datetime.utcnow(), "%d-%b-%Y-%X")
+final_save_path = os.path.join(OPT["save_path"], "final_world_{}.pth".format(timestamp))
+print("Saving at final world at: {}".format(final_save_path))
 world.save_agents(final_save_path)

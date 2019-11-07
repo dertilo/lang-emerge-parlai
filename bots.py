@@ -57,10 +57,11 @@ class ChatBotAgent(Agent, nn.Module):
     speak_net : nn.Linear
     softmax : nn.Softmax
     """
+
     def __init__(self, opt, shared=None):
         super(ChatBotAgent, self).__init__(opt, shared)
         nn.Module.__init__(self)
-        self.id = 'ChatBotAgent'
+        self.id = "ChatBotAgent"
         self.observation = None
         # standard initializations
         self.h_state = torch.Tensor()
@@ -69,8 +70,10 @@ class ChatBotAgent(Agent, nn.Module):
         self.distr_action = []
 
         # modules (common)
-        self.listen_net = nn.Embedding(self.opt['in_vocab_size'], self.opt['embed_size'])
-        self.speak_net = nn.Linear(self.opt['hidden_size'], self.opt['out_vocab_size'])
+        self.listen_net = nn.Embedding(
+            self.opt["in_vocab_size"], self.opt["embed_size"]
+        )
+        self.speak_net = nn.Linear(self.opt["hidden_size"], self.opt["out_vocab_size"])
         self.softmax = nn.Softmax()
 
         # xavier init of listen_net and speak_net
@@ -80,20 +83,27 @@ class ChatBotAgent(Agent, nn.Module):
     def observe(self, observation):
         """Given an input token, interact for next round."""
         self.observation = observation
-        if not observation.get('episode_done'):
+        if not observation.get("episode_done"):
             # embed and pass through LSTM
-            token_embeds = self.listen_net(observation['text'].squeeze())
+            token_embeds = self.listen_net(observation["text"].squeeze())
 
             # concat with image representation (valid for abot)
-            if 'image' in observation:
-                token_embeds = torch.cat((token_embeds, observation['image']), 1)
+            if "image" in observation:
+                token_embeds = torch.cat((token_embeds, observation["image"]), 1)
             # remove all dimensions with size one
             token_embeds = token_embeds.squeeze(1)
             # update agent state using these tokens
-            self.h_state, self.c_state = self.rnn(token_embeds, (self.h_state, self.c_state))
-        elif observation.get('reward') is not None:
-            for m, action in self.distr_action:  # TODO: sure that all conversation-rounds get same reward?
-                loss = -m.log_prob(action) * observation['reward'].squeeze()
+            self.h_state, self.c_state = self.rnn(
+                token_embeds, (self.h_state, self.c_state)
+            )
+        elif observation.get("reward") is not None:
+            for (
+                m,
+                action,
+            ) in (
+                self.distr_action
+            ):  # TODO: sure that all conversation-rounds get same reward?
+                loss = -m.log_prob(action) * observation["reward"].squeeze()
                 loss.sum().backward(retain_graph=True)
 
             for parameter in self.parameters():
@@ -110,17 +120,17 @@ class ChatBotAgent(Agent, nn.Module):
         else:
             m = Categorical(out_distr)
             action = m.sample()
-            self.distr_action.append((m,action))
-        return {'text': action, 'id': self.id}
+            self.distr_action.append((m, action))
+        return {"text": action, "id": self.id}
 
     def reset(self, batch_size=None, retain_actions=False):
         """Reset state and actions. ``opt.batch_size`` is not always used because batch_size
         changes when complete data is passed (for validation)."""
         if batch_size is None:
-            batch_size = self.opt['batch_size']
-        self.h_state = Variable(torch.zeros(batch_size, self.opt['hidden_size']))
-        self.c_state = Variable(torch.zeros(batch_size, self.opt['hidden_size']))
-        if self.opt.get('use_gpu'):
+            batch_size = self.opt["batch_size"]
+        self.h_state = Variable(torch.zeros(batch_size, self.opt["hidden_size"]))
+        self.c_state = Variable(torch.zeros(batch_size, self.opt["hidden_size"]))
+        if self.opt.get("use_gpu"):
             self.h_state, self.c_state = self.h_state.cuda(), self.c_state.cuda()
 
         if not retain_actions:
@@ -163,28 +173,31 @@ class Questioner(ChatBotAgent):
         Offset due to listening response of answer bot. Answer token one-hot vectors would
         require width equal to answer vocabulary - next question vectors would be after that.
     """
+
     def __init__(self, opt, shared=None):
-        opt['in_vocab_size'] = opt['q_out_vocab'] + opt['a_out_vocab'] + opt['task_vocab']
-        opt['out_vocab_size'] = opt['q_out_vocab']
+        opt["in_vocab_size"] = (
+            opt["q_out_vocab"] + opt["a_out_vocab"] + opt["task_vocab"]
+        )
+        opt["out_vocab_size"] = opt["q_out_vocab"]
         super(Questioner, self).__init__(opt, shared)
-        self.id = 'QBot'
+        self.id = "QBot"
 
         # always condition on task
-        self.rnn = nn.LSTMCell(self.opt['embed_size'], self.opt['hidden_size'])
+        self.rnn = nn.LSTMCell(self.opt["embed_size"], self.opt["hidden_size"])
 
         # additional prediction network, start token included
-        num_preds = sum([len(ii) for ii in self.opt['props'].values()])
+        num_preds = sum([len(ii) for ii in self.opt["props"].values()])
         # network for predicting
-        self.predict_rnn = nn.LSTMCell(self.opt['embed_size'], self.opt['hidden_size'])
-        self.predict_net = nn.Linear(self.opt['hidden_size'], num_preds)
+        self.predict_rnn = nn.LSTMCell(self.opt["embed_size"], self.opt["hidden_size"])
+        self.predict_net = nn.Linear(self.opt["hidden_size"], num_preds)
 
         # xavier init of rnn, predict_rnn, predict_net
         for module in {self.rnn, self.predict_rnn, self.predict_net}:
             module = xavier_init(module)
 
         # setting offset
-        self.task_offset = opt['q_out_vocab'] + opt['a_out_vocab']
-        self.listen_offset = opt['a_out_vocab']
+        self.task_offset = opt["q_out_vocab"] + opt["a_out_vocab"]
+        self.listen_offset = opt["a_out_vocab"]
 
     def predict(self, tasks, num_tokens):
         """Return an answer from the task."""
@@ -196,8 +209,9 @@ class Questioner(ChatBotAgent):
             task_embeds = self.listen_net(tasks)
             task_embeds = task_embeds.squeeze()
             # unroll twice, compute softmax and choose a token
-            self.h_state, self.c_state = self.predict_rnn(task_embeds,
-                                                          (self.h_state, self.c_state))
+            self.h_state, self.c_state = self.predict_rnn(
+                task_embeds, (self.h_state, self.c_state)
+            )
             out_distr = self.softmax(self.predict_net(self.h_state))
 
             # if evaluating
@@ -206,7 +220,7 @@ class Questioner(ChatBotAgent):
             else:
                 m = torch.distributions.Categorical(out_distr)
                 action = m.sample()
-                self.distr_action.append((m,action))
+                self.distr_action.append((m, action))
 
             # record the guess and distribution
             guess_tokens.append(action)
@@ -236,29 +250,32 @@ class Answerer(ChatBotAgent):
         Offset due to listening response of question bot. Question token one-hot vectors would
         require width equal to question vocabulary - answer vectors would be after that.
     """
+
     def __init__(self, opt, shared=None):
-        opt['in_vocab_size'] = opt['q_out_vocab'] + opt['a_out_vocab']
-        opt['out_vocab_size'] = opt['a_out_vocab']
+        opt["in_vocab_size"] = opt["q_out_vocab"] + opt["a_out_vocab"]
+        opt["out_vocab_size"] = opt["a_out_vocab"]
         super(Answerer, self).__init__(opt, shared)
-        self.id = 'ABot'
+        self.id = "ABot"
 
         # number of attribute values
-        num_attrs = sum([len(ii) for ii in self.opt['props'].values()])
+        num_attrs = sum([len(ii) for ii in self.opt["props"].values()])
         # number of unique attributes
-        num_unique_attrs = len(self.opt['props'])
+        num_unique_attrs = len(self.opt["props"])
 
         # rnn input size
-        rnn_input_size = num_unique_attrs * self.opt['img_feat_size'] + self.opt['embed_size']
+        rnn_input_size = (
+            num_unique_attrs * self.opt["img_feat_size"] + self.opt["embed_size"]
+        )
 
-        self.img_net = nn.Embedding(num_attrs, self.opt['img_feat_size'])
-        self.rnn = nn.LSTMCell(rnn_input_size, self.opt['hidden_size'])
+        self.img_net = nn.Embedding(num_attrs, self.opt["img_feat_size"])
+        self.rnn = nn.LSTMCell(rnn_input_size, self.opt["hidden_size"])
 
         # xavier init of img_net and rnn
         for module in {self.img_net, self.rnn}:
             module = xavier_init(module)
 
         # set offset
-        self.listen_offset = opt['q_out_vocab']
+        self.listen_offset = opt["q_out_vocab"]
 
     def embed_image(self, image):
         """Embed the image attributes color, shape and style into vectors of length 20 each, and
@@ -266,5 +283,5 @@ class Answerer(ChatBotAgent):
         """
         embeds = self.img_net(image)
         # features = torch.cat(embeds.transpose(0, 1), 1)
-        features = embeds.view(-1,embeds.shape[2]*embeds.shape[1])
+        features = embeds.view(-1, embeds.shape[2] * embeds.shape[1])
         return features
