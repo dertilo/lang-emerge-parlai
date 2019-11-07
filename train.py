@@ -119,8 +119,8 @@ for epoch_id in range(OPT['num_epochs']):
         reward.fill_(- 10 * OPT['rl_scale'])
 
         # both attributes need to match
-        first_match = guess_token[0].data == batch['labels'][:, 0:1]
-        second_match = guess_token[1].data == batch['labels'][:, 1:2]
+        first_match = guess_token[0].data == batch['labels'][:, 0]
+        second_match = guess_token[1].data == batch['labels'][:, 1]
         reward[first_match & second_match] = OPT['rl_scale']
 
         # record cumulative reward in world

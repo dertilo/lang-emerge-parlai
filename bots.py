@@ -82,7 +82,7 @@ class ChatBotAgent(Agent, nn.Module):
         self.observation = observation
         if not observation.get('episode_done'):
             # embed and pass through LSTM
-            token_embeds = self.listen_net(observation['text'])
+            token_embeds = self.listen_net(observation['text'].squeeze())
 
             # concat with image representation (valid for abot)
             if 'image' in observation:
