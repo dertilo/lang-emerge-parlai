@@ -47,7 +47,7 @@ class ChatBotAgent(Agent, nn.Module):
     observation : dict
         Observations dict exchanged during dialogs and on starting fresh episode. Has keys as
         described in ParlAI docs ('text', 'image', 'episode_done', 'reward').
-    actions : list
+    distr_action : list
         List of action tensors by agent, acted in the current dialog episode.
     h_state, c_state : torch.autograd.Variable
         State of the agent.
@@ -66,7 +66,7 @@ class ChatBotAgent(Agent, nn.Module):
         self.h_state = torch.Tensor()
         self.c_state = torch.Tensor()
         self.eval_flag = False
-        self.actions = []
+        self.distr_action = []
 
         # modules (common)
         self.listen_net = nn.Embedding(self.opt['in_vocab_size'], self.opt['embed_size'])
@@ -91,15 +91,13 @@ class ChatBotAgent(Agent, nn.Module):
             token_embeds = token_embeds.squeeze(1)
             # update agent state using these tokens
             self.h_state, self.c_state = self.rnn(token_embeds, (self.h_state, self.c_state))
-        else:
-            if observation.get('reward') is not None:
-                for action in self.actions:
-                    action.reinforce(observation['reward'])
-                autograd_backward(self.actions, [None for _ in self.actions], retain_graph=True)
+        elif observation.get('reward') is not None:
+            for m, action in self.distr_action:  # TODO: sure that all conversation-rounds get same reward?
+                loss = -m.log_prob(action) * observation['reward'].squeeze()
+                loss.sum().backward(retain_graph=True)
 
-                # clamp all gradients between (-5, 5)
-                for parameter in self.parameters():
-                    parameter.grad.data.clamp_(min=-5, max=5)
+            for parameter in self.parameters():
+                parameter.grad.data.clamp_(min=-5, max=5)
 
     def act(self):
         """Speak a token."""
@@ -107,14 +105,13 @@ class ChatBotAgent(Agent, nn.Module):
         out_distr = self.softmax(self.speak_net(self.h_state))
 
         if self.eval_flag:
-            _, actions = out_distr.max(1)
-            actions = actions.unsqueeze(1)
+            _, action = out_distr.max(1)
+            action = action.unsqueeze(1)
         else:
             m = Categorical(out_distr)
-            actions = m.sample()
-            # actions = out_distr.multinomial()
-            self.actions.append(actions)
-        return {'text': actions, 'id': self.id}
+            action = m.sample()
+            self.distr_action.append((m,action))
+        return {'text': action, 'id': self.id}
 
     def reset(self, batch_size=None, retain_actions=False):
         """Reset state and actions. ``opt.batch_size`` is not always used because batch_size
@@ -127,7 +124,7 @@ class ChatBotAgent(Agent, nn.Module):
             self.h_state, self.c_state = self.h_state.cuda(), self.c_state.cuda()
 
         if not retain_actions:
-            self.actions = []
+            self.distr_action = []
 
     def train(self):
         """Switch to training mode."""
@@ -205,15 +202,14 @@ class Questioner(ChatBotAgent):
 
             # if evaluating
             if self.eval_flag:
-                _, actions = out_distr.max(1)
+                _, action = out_distr.max(1)
             else:
                 m = torch.distributions.Categorical(out_distr)
-                actions = m.sample()
-                # record actions
-                self.actions.append(actions)
+                action = m.sample()
+                self.distr_action.append((m,action))
 
             # record the guess and distribution
-            guess_tokens.append(actions)
+            guess_tokens.append(action)
             guess_distr.append(out_distr)
 
         # return prediction
