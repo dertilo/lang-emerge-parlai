@@ -14,6 +14,7 @@ from torch.autograd import Variable
 from torch.autograd import backward as autograd_backward
 
 from parlai.core.agents import Agent
+from torch.distributions import Categorical
 
 
 def xavier_init(module):
@@ -109,9 +110,11 @@ class ChatBotAgent(Agent, nn.Module):
             _, actions = out_distr.max(1)
             actions = actions.unsqueeze(1)
         else:
-            actions = out_distr.multinomial()
+            m = Categorical(out_distr)
+            actions = m.sample()
+            # actions = out_distr.multinomial()
             self.actions.append(actions)
-        return {'text': actions.squeeze(1), 'id': self.id}
+        return {'text': actions, 'id': self.id}
 
     def reset(self, batch_size=None, retain_actions=False):
         """Reset state and actions. ``opt.batch_size`` is not always used because batch_size
@@ -204,7 +207,8 @@ class Questioner(ChatBotAgent):
             if self.eval_flag:
                 _, actions = out_distr.max(1)
             else:
-                actions = out_distr.multinomial()
+                m = torch.distributions.Categorical(out_distr)
+                actions = m.sample()
                 # record actions
                 self.actions.append(actions)
 
@@ -265,5 +269,6 @@ class Answerer(ChatBotAgent):
         concatenate them to make a feature vector representing the image.
         """
         embeds = self.img_net(image)
-        features = torch.cat(embeds.transpose(0, 1), 1)
+        # features = torch.cat(embeds.transpose(0, 1), 1)
+        features = embeds.view(-1,embeds.shape[2]*embeds.shape[1])
         return features
